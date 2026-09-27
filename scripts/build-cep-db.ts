@@ -147,7 +147,9 @@ function insertRows(database: DatabaseSync, sql: string, rows: Iterable<(string 
     }
     database.exec("COMMIT");
   } catch (error) {
-    database.exec("ROLLBACK");
+    if (database.isTransaction) {
+      database.exec("ROLLBACK");
+    }
     throw error;
   }
   return total;
@@ -231,7 +233,11 @@ export function generateCepDatabase(options: GenerateCepDatabaseOptions): Genera
     return { states: totalStates, cities: totalCities, ceps: totalCeps };
   } catch (error) {
     if (database) {
-      database.close();
+      try {
+        database.close();
+      } catch {
+        // best-effort: the original error matters more
+      }
     }
     rmSync(temporary, { force: true });
     throw error;

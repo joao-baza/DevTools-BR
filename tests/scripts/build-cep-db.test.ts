@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { generateCepDatabase } from "../../scripts/build-cep-db.js";
 
@@ -65,6 +65,7 @@ describe("generateCepDatabase", () => {
     writeFileSync(badPath, "01001000,Praça Central,Centro,1,1\n");
 
     expect(() => generateCepDatabase({ input: tree.input, output: tree.output, regions: TEST_REGIONS })).toThrow(/tt\.1\.csv.*linha 1/);
+    expect(readdirSync(dirname(tree.output)).filter((name) => name.includes(".tmp"))).toEqual([]);
   });
 
   it("requires every region, state and part folder", () => {
