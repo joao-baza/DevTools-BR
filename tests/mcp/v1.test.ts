@@ -362,6 +362,19 @@ describe("MCP v1 CEP tools", () => {
     }
   });
 
+  it("returns invalid_parameter for a UF absent from the database", async () => {
+    const fixture = createCepFixture();
+    try {
+      const server = createMcpServer({ cepDatabasePath: fixture.databasePath });
+      const result = await server.callToolForTests("list_cities", { uf: "RJ" });
+
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ error: { code: "invalid_parameter", field: "uf" } });
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("calls lookup_cep through the SDK protocol path with output validation", async () => {
     const fixture = createCepFixture();
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

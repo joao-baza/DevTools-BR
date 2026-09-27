@@ -257,6 +257,22 @@ describe("REST v1 CEP lookup", () => {
     });
   });
 
+  it("omits numberValidation when a CEP is absent even if a number was provided", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/validators/cep",
+        payload: { value: "99999999", number: 42 }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body).toMatchObject({ cep: "99999999", valid: false });
+      expect(body).not.toHaveProperty("numberValidation");
+    });
+  });
+
   it("rejects values without eight digits", async () => {
     await withFixture(async (fixture) => {
       const app = makeCepApp(fixture.databasePath);
@@ -314,6 +330,34 @@ describe("REST v1 CEP lookup", () => {
     });
   });
 
+  it("returns an empty match set for cities with no hits", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/lookups/cities",
+        payload: { uf: "SP", query: "xyz" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ uf: "SP", query: "xyz", cities: [], total: 0, hasMore: false });
+    });
+  });
+
+  it("rejects a UF that is valid but absent from the database", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/lookups/cities",
+        payload: { uf: "RJ" }
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: { code: "invalid_parameter", field: "uf" } });
+    });
+  });
+
   it("returns 503 cep_database_unavailable without the database", async () => {
     const app = makeCepApp(join(tmpdir(), `missing-${process.pid}-${Date.now()}.sqlite`));
     const response = await app.inject({
@@ -324,6 +368,14 @@ describe("REST v1 CEP lookup", () => {
 
     expect(response.statusCode).toBe(503);
     expect(response.json()).toMatchObject({ error: { code: "cep_database_unavailable" } });
+
+    const states = await app.inject({ method: "POST", url: "/api/lookups/states", payload: {} });
+    expect(states.statusCode).toBe(503);
+    expect(states.json()).toMatchObject({ error: { code: "cep_database_unavailable" } });
+
+    const cities = await app.inject({ method: "POST", url: "/api/lookups/cities", payload: { uf: "SP" } });
+    expect(cities.statusCode).toBe(503);
+    expect(cities.json()).toMatchObject({ error: { code: "cep_database_unavailable" } });
 
     const other = await app.inject({ method: "POST", url: "/api/encoders/md5", payload: { text: "abc" } });
     expect(other.statusCode).toBe(200);

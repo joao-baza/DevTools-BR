@@ -1,9 +1,9 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { generateCepDatabase } from "../../scripts/build-cep-db.js";
+import { generateCepDatabase, main } from "../../scripts/build-cep-db.js";
 
 const TEST_REGIONS = { Teste: ["TT"] } as const;
 const directories: string[] = [];
@@ -73,5 +73,17 @@ describe("generateCepDatabase", () => {
     rmSync(join(tree.input, "Teste", "TT", "tt.5.csv"));
 
     expect(() => generateCepDatabase({ input: tree.input, output: tree.output, regions: TEST_REGIONS })).toThrow(/tt\.5\.csv/);
+  });
+
+  it("rejects unknown and valueless CLI arguments", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(main(["--bogus"])).toBe(1);
+      expect(main(["--input"])).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Argumento desconhecido: --bogus"));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Valor ausente para --input"));
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
