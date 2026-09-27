@@ -1,5 +1,8 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRestServer } from "../../src/rest/server.js";
+import { createCepFixture, type CepFixture } from "../helpers/cep-fixture.js";
 
 const apps: ReturnType<typeof createRestServer>[] = [];
 
@@ -133,5 +136,164 @@ describe("REST v1", () => {
     const response = await app.inject({ method: "POST", url, payload });
 
     expect(response.statusCode).toBe(200);
+  });
+});
+
+describe("REST v1 CEP lookup", () => {
+  function makeCepApp(cepDatabasePath: string) {
+    const app = createRestServer({ cepDatabasePath });
+    apps.push(app);
+    return app;
+  }
+
+  function withFixture<T>(run: (fixture: CepFixture) => Promise<T>): Promise<T> {
+    const fixture = createCepFixture();
+    return run(fixture).finally(() => fixture.cleanup());
+  }
+
+  it("looks up a CEP and validates a compatible number", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/validators/cep",
+        payload: { value: "01310-930", number: 1200 }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        cep: "01310930",
+        formatted: "01310-930",
+        valid: true,
+        address: "Av. Paulista",
+        complement: "- de 1000/1001 a 1500",
+        neighborhood: "Bela Vista",
+        city: "São Paulo",
+        state: "São Paulo",
+        uf: "SP",
+        numberValidation: { status: "compatible", number: 1200 }
+      });
+    });
+  });
+
+  it("flags incompatible parity for a known CEP", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/validators/cep",
+        payload: { value: "01001000", number: 20 }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.valid).toBe(true);
+      expect(body.numberValidation.status).toBe("incompatible");
+    });
+  });
+
+  it("reports range_unavailable when the complement has no rule", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/validators/cep",
+        payload: { value: "13010011", number: 5 }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().numberValidation).toMatchObject({ status: "range_unavailable", rule: null });
+    });
+  });
+
+  it("returns valid false for a CEP absent from the base", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/validators/cep",
+        payload: { value: "99999999" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        cep: "99999999",
+        formatted: "99999-999",
+        valid: false,
+        message: "CEP não encontrado na base local."
+      });
+    });
+  });
+
+  it("rejects values without eight digits", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/validators/cep",
+        payload: { value: "1234567" }
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: { code: "invalid_parameter", field: "value" } });
+    });
+  });
+
+  it("lists states", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({ method: "POST", url: "/api/lookups/states", payload: {} });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        states: [
+          { name: "Minas Gerais", abbreviation: "MG" },
+          { name: "São Paulo", abbreviation: "SP" }
+        ]
+      });
+    });
+  });
+
+  it("lists cities with accent-insensitive query", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/lookups/cities",
+        payload: { uf: "SP", query: "sao" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ uf: "SP", query: "sao", cities: ["São Paulo"], total: 1, hasMore: false });
+    });
+  });
+
+  it("applies limit and reports hasMore", async () => {
+    await withFixture(async (fixture) => {
+      const app = makeCepApp(fixture.databasePath);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/lookups/cities",
+        payload: { uf: "SP", limit: 1 }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ cities: ["Campinas"], total: 2, hasMore: true });
+    });
+  });
+
+  it("returns 503 cep_database_unavailable without the database", async () => {
+    const app = makeCepApp(join(tmpdir(), `missing-${process.pid}-${Date.now()}.sqlite`));
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/validators/cep",
+      payload: { value: "01001000" }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ error: { code: "cep_database_unavailable" } });
+
+    const other = await app.inject({ method: "POST", url: "/api/encoders/md5", payload: { text: "abc" } });
+    expect(other.statusCode).toBe(200);
   });
 });
