@@ -3,18 +3,22 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { ZodError } from "zod/v4";
 import * as z from "zod/v4";
 import { DomainError } from "../domain/errors.js";
+import { CepRepository, defaultCepDatabasePath } from "../domain/cep-repository.js";
 import { brazilianStates } from "../schemas/common.js";
 import {
   base64DecodeRequestSchema,
+  cepLookupRequestSchema,
+  citiesRequestSchema,
   cnpjGenerateRequestSchema,
   cpfGenerateRequestSchema,
   documentValueSchema,
   genericGenerateRequestSchema,
   seededOnlyRequestSchema,
+  statesRequestSchema,
   textRequestSchema,
   urlDecodeRequestSchema
 } from "../schemas/v1.js";
-import { v1Services } from "../services/v1.js";
+import { createV1Services, v1Services } from "../services/v1.js";
 
 type StructuredContent = Record<string, unknown>;
 type ToolHandler = (args: unknown) => unknown | Promise<unknown>;
@@ -168,6 +172,82 @@ const analyzeTextOutputSchema = z.object({
   vowels: z.number(),
   consonants: z.number()
 });
+
+export interface McpServerOptions {
+  cepDatabasePath?: string;
+}
+
+function createCepServices(options: McpServerOptions) {
+  return createV1Services(new CepRepository(options.cepDatabasePath ?? defaultCepDatabasePath()));
+}
+
+const numberValidationOutputSchema = z.object({
+  number: z.number().nullable(),
+  rule: z
+    .object({
+      minimum: z.number().nullable(),
+      maximum: z.number().nullable(),
+      parity: z.string().nullable()
+    })
+    .nullable(),
+  status: z.string(),
+  message: z.string()
+});
+
+const cepLookupOutputSchema = z.object({
+  cep: z.string(),
+  formatted: z.string(),
+  valid: z.boolean(),
+  message: z.string().optional(),
+  address: z.string().optional(),
+  complement: z.string().nullable().optional(),
+  neighborhood: z.string().nullable().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  uf: z.string().optional(),
+  numberValidation: numberValidationOutputSchema.optional()
+});
+
+const listStatesOutputSchema = z.object({
+  states: z.array(z.object({ name: z.string(), abbreviation: z.string() }))
+});
+
+const listCitiesOutputSchema = z.object({
+  uf: z.string(),
+  query: z.string(),
+  cities: z.array(z.string()),
+  total: z.number(),
+  hasMore: z.boolean()
+});
+
+function buildCepToolRegistrations(services: ReturnType<typeof createV1Services>): ToolRegistration[] {
+  return [
+    toolRegistration({
+      name: "lookup_cep",
+      title: "Lookup CEP",
+      description: "Look up a Brazilian CEP in the local database and validate its address number against the complement range.",
+      inputSchema: cepLookupRequestSchema,
+      outputSchema: cepLookupOutputSchema,
+      handler: services.lookupCep
+    }),
+    toolRegistration({
+      name: "list_states",
+      title: "List States",
+      description: "List Brazilian states from the local CEP database.",
+      inputSchema: statesRequestSchema,
+      outputSchema: listStatesOutputSchema,
+      handler: () => services.listStates()
+    }),
+    toolRegistration({
+      name: "list_cities",
+      title: "List Cities",
+      description: "List cities of a Brazilian state, with accent-insensitive search.",
+      inputSchema: citiesRequestSchema,
+      outputSchema: listCitiesOutputSchema,
+      handler: services.listCities
+    })
+  ];
+}
 
 const toolRegistrations: ToolRegistration[] = [
   toolRegistration({
@@ -367,7 +447,16 @@ const restEndpoints = [
     tool: "analyze_text",
     inputs: ["text"],
     outputs: ["characters", "charactersWithoutSpaces", "words", "spaces", "lines", "vowels", "consonants"]
-  }
+  },
+  {
+    method: "POST",
+    path: "/api/validators/cep",
+    tool: "lookup_cep",
+    inputs: ["value", "number"],
+    outputs: ["cep", "formatted", "valid", "message", "address", "complement", "neighborhood", "city", "state", "uf", "numberValidation"]
+  },
+  { method: "POST", path: "/api/lookups/states", tool: "list_states", inputs: [], outputs: ["states"] },
+  { method: "POST", path: "/api/lookups/cities", tool: "list_cities", inputs: ["uf", "query", "limit"], outputs: ["uf", "query", "cities", "total", "hasMore"] }
 ] as const;
 
 function asMcpResult(value: unknown): McpToolResult {
@@ -414,12 +503,12 @@ async function callRegisteredTool(tool: ToolRegistration, args: Record<string, u
   }
 }
 
-function buildCatalogText(): string {
+function buildCatalogText(tools: ToolRegistration[]): string {
   const endpointsByTool = new Map<string, (typeof restEndpoints)[number]>(restEndpoints.map((endpoint) => [endpoint.tool, endpoint]));
   return JSON.stringify(
     {
       version: "v1",
-      tools: toolRegistrations.map((tool) => ({
+      tools: tools.map((tool) => ({
         name: tool.name,
         title: tool.title,
         description: tool.description,
@@ -451,10 +540,10 @@ function buildRestSchemaResource(): ResourcePayload {
   };
 }
 
-function buildMcpSchemaResource(): ResourcePayload {
+function buildMcpSchemaResource(tools: ToolRegistration[]): ResourcePayload {
   return {
     version: "v1",
-    tools: toolRegistrations.map((tool) => ({
+    tools: tools.map((tool) => ({
       name: tool.name,
       title: tool.title,
       description: tool.description,
@@ -489,52 +578,55 @@ function buildAlgorithmsResource(): ResourcePayload {
       { name: "RENAVAM", policy: "Generate and validate RENAVAM check digits." },
       { name: "Base64", policy: "Encode UTF-8 text and strictly decode Base64 with round-trip validation." },
       { name: "URL component", policy: "Encode and decode URL components with invalid escape rejection." },
-      { name: "Text graphemes", policy: "Reverse and count text using grapheme-aware segmentation where available." }
+      { name: "Text graphemes", policy: "Reverse and count text using grapheme-aware segmentation where available." },
+      { name: "CEP", policy: "Look up CEPs in a local database; conservative complement range rules validate address numbers." }
     ]
   };
 }
 
-const resourceDefinitions = [
-  {
-    uri: sdkCatalogUri,
-    name: "tools-catalog",
-    title: "DevTools BR Tools Catalog",
-    description: "JSON catalog of DevTools BR MCP v1 tools and REST endpoints.",
-    text: buildCatalogText
-  },
-  {
-    uri: "devs-clone://schemas/rest-v1",
-    name: "rest-v1-schema",
-    title: "DevTools BR REST v1 Schema",
-    description: "JSON description of REST v1 endpoints, methods, inputs, and outputs.",
-    text: () => JSON.stringify(buildRestSchemaResource(), null, 2)
-  },
-  {
-    uri: "devs-clone://schemas/mcp-v1",
-    name: "mcp-v1-schema",
-    title: "DevTools BR MCP v1 Schema",
-    description: "JSON description of MCP v1 tools and their input/output schemas.",
-    text: () => JSON.stringify(buildMcpSchemaResource(), null, 2)
-  },
-  {
-    uri: "devs-clone://reference/states",
-    name: "brazilian-states",
-    title: "Brazilian States",
-    description: "JSON list of Brazilian UFs accepted by v1 generators.",
-    text: () => JSON.stringify(buildStatesResource(), null, 2)
-  },
-  {
-    uri: "devs-clone://reference/algorithms",
-    name: "algorithm-reference",
-    title: "DevTools BR Algorithm Reference",
-    description: "JSON notes naming v1 algorithms and validation policies.",
-    text: () => JSON.stringify(buildAlgorithmsResource(), null, 2)
-  }
-] as const;
+function buildResourceDefinitions(tools: ToolRegistration[]) {
+  return [
+    {
+      uri: sdkCatalogUri,
+      name: "tools-catalog",
+      title: "DevTools BR Tools Catalog",
+      description: "JSON catalog of DevTools BR MCP v1 tools and REST endpoints.",
+      text: () => buildCatalogText(tools)
+    },
+    {
+      uri: "devs-clone://schemas/rest-v1",
+      name: "rest-v1-schema",
+      title: "DevTools BR REST v1 Schema",
+      description: "JSON description of REST v1 endpoints, methods, inputs, and outputs.",
+      text: () => JSON.stringify(buildRestSchemaResource(), null, 2)
+    },
+    {
+      uri: "devs-clone://schemas/mcp-v1",
+      name: "mcp-v1-schema",
+      title: "DevTools BR MCP v1 Schema",
+      description: "JSON description of MCP v1 tools and their input/output schemas.",
+      text: () => JSON.stringify(buildMcpSchemaResource(tools), null, 2)
+    },
+    {
+      uri: "devs-clone://reference/states",
+      name: "brazilian-states",
+      title: "Brazilian States",
+      description: "JSON list of Brazilian UFs accepted by v1 generators.",
+      text: () => JSON.stringify(buildStatesResource(), null, 2)
+    },
+    {
+      uri: "devs-clone://reference/algorithms",
+      name: "algorithm-reference",
+      title: "DevTools BR Algorithm Reference",
+      description: "JSON notes naming v1 algorithms and validation policies.",
+      text: () => JSON.stringify(buildAlgorithmsResource(), null, 2)
+    }
+  ] as const;
+}
 
-function getResource(uri: string): CatalogResource {
+function getResource(uri: string, resources: ReadonlyArray<{ uri: string; name: string; title: string; description: string; text: () => string }>): CatalogResource {
   const lookupUri = uri === catalogUri ? sdkCatalogUri : uri;
-  const resource = resourceDefinitions.find((definition) => definition.uri === lookupUri);
+  const resource = resources.find((definition) => definition.uri === lookupUri);
   if (!resource) {
     throw new Error(`Unknown MCP resource: ${uri}`);
   }
@@ -548,7 +640,11 @@ function getResource(uri: string): CatalogResource {
   };
 }
 
-function registerJsonResource(server: McpServer, resource: (typeof resourceDefinitions)[number]) {
+function registerJsonResource(
+  server: McpServer,
+  resource: { uri: string; name: string; title: string; description: string; text: () => string },
+  resources: ReadonlyArray<{ uri: string; name: string; title: string; description: string; text: () => string }>
+) {
   server.registerResource(
     resource.name,
     resource.uri,
@@ -558,13 +654,13 @@ function registerJsonResource(server: McpServer, resource: (typeof resourceDefin
       mimeType: "application/json"
     },
     (resourceUri) => {
-      const resource = getResource(resourceUri.href);
+      const resolved = getResource(resourceUri.href, resources);
       return {
         contents: [
           {
-            uri: resource.uri,
-            mimeType: resource.mimeType,
-            text: resource.text
+            uri: resolved.uri,
+            mimeType: resolved.mimeType,
+            text: resolved.text
           }
         ]
       };
@@ -572,10 +668,12 @@ function registerJsonResource(server: McpServer, resource: (typeof resourceDefin
   );
 }
 
-export function buildMcpSdkServer(): McpServer {
+export function buildMcpSdkServer(options: McpServerOptions = {}) {
+  const tools: ToolRegistration[] = [...toolRegistrations, ...buildCepToolRegistrations(createCepServices(options))];
+  const resources = buildResourceDefinitions(tools);
   const server = new McpServer({ name: "devtools-br", version: "0.1.0" });
 
-  for (const tool of toolRegistrations) {
+  for (const tool of tools) {
     server.registerTool(
       tool.name,
       {
@@ -590,28 +688,30 @@ export function buildMcpSdkServer(): McpServer {
     );
   }
 
-  for (const resource of resourceDefinitions) {
-    registerJsonResource(server, resource);
+  for (const resource of resources) {
+    registerJsonResource(server, resource, resources);
   }
 
   return server;
 }
 
-export function createMcpServer() {
+export function createMcpServer(options: McpServerOptions = {}) {
+  const tools: ToolRegistration[] = [...toolRegistrations, ...buildCepToolRegistrations(createCepServices(options))];
+  const resources = buildResourceDefinitions(tools);
   return {
     startStdio: async () => {
-      const server = buildMcpSdkServer();
+      const server = buildMcpSdkServer(options);
       const transport = new StdioServerTransport();
       await server.connect(transport);
     },
-    listToolsForTests: () => toolRegistrations,
+    listToolsForTests: () => tools,
     callToolForTests: async (name: string, args: Record<string, unknown>) => {
-      const tool = toolRegistrations.find((registration) => registration.name === name);
+      const tool = tools.find((registration) => registration.name === name);
       if (!tool) {
         throw new Error(`Unknown MCP tool: ${name}`);
       }
       return callRegisteredTool(tool, args);
     },
-    readResourceForTests: async (uri: string) => getResource(uri)
+    readResourceForTests: async (uri: string) => getResource(uri, resources)
   };
 }

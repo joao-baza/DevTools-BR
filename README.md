@@ -7,6 +7,7 @@ O código de produção não chama o 4Devs. O projeto implementa os algoritmos l
 ## O que o projeto entrega
 
 - Geração e validação de documentos brasileiros: CPF, CNPJ, CNH, RG, PIS/PASEP e RENAVAM.
+- Consulta de CEP em base local: endereço por CEP, validação do número contra a faixa do complemento, estados e cidades por UF.
 - Encoders e decoders: Base64, MD5, SHA1 e URL encode/decode.
 - Ferramentas de texto: remover acentos, inverter texto e analisar contagens.
 - API REST v1 para uso por aplicações HTTP.
@@ -15,7 +16,7 @@ O código de produção não chama o 4Devs. O projeto implementa os algoritmos l
 
 ## Requisitos
 
-- Node.js 20 ou superior.
+- Node.js 22.13 ou superior.
 - npm.
 - Docker e Docker Compose, se quiser rodar em containers.
 
@@ -82,6 +83,9 @@ Todos os endpoints usam `POST` e recebem JSON.
 | `/api/text/remove-accents` | `text` | `text` |
 | `/api/text/reverse` | `text` | `text` |
 | `/api/text/analyze` | `text` | `characters`, `charactersWithoutSpaces`, `words`, `spaces`, `lines`, `vowels`, `consonants` |
+| `/api/validators/cep` | `value`, `number?` | `cep`, `formatted`, `valid`, `message?`, `address?`, `complement?`, `neighborhood?`, `city?`, `state?`, `uf?`, `numberValidation?` |
+| `/api/lookups/states` | `{}` | `states` |
+| `/api/lookups/cities` | `uf`, `query?`, `limit?` | `uf`, `query`, `cities`, `total`, `hasMore` |
 
 No v1, `format: "alphanumeric"` para CNPJ é rejeitado. A implementação atual gera CNPJ numérico.
 
@@ -104,6 +108,7 @@ Códigos comuns:
 - `invalid_parameter`: payload inválido ou parâmetro fora do domínio aceito.
 - `invalid_input`: entrada malformada, como Base64 inválido.
 - `internal_error`: falha inesperada.
+- `cep_database_unavailable`: base de CEP ausente ou inválida (gere com `npm run build:cep-db`).
 
 ## MCP
 
@@ -139,6 +144,7 @@ Ferramentas MCP disponíveis:
 - `encode_md5`, `encode_sha1`
 - `encode_url`, `decode_url`
 - `remove_text_accents`, `reverse_text`, `analyze_text`
+- `lookup_cep`, `list_states`, `list_cities`
 
 Recursos MCP disponíveis:
 
@@ -147,6 +153,18 @@ Recursos MCP disponíveis:
 - `devs-clone://schemas/mcp-v1`
 - `devs-clone://reference/states`
 - `devs-clone://reference/algorithms`
+
+## Base de CEP
+
+A consulta de CEP usa uma base SQLite local gerada a partir dos CSVs versionados em `data/ceps/`, com dados do [CEP Aberto](https://www.cepaberto.com/). A base cobre 27 estados, 10.663 cidades e 1.137.150 CEPs. O banco (~118 MB) não é versionado; gere-o com:
+
+```bash
+npm run build:cep-db
+```
+
+Opções: `--input` (padrão `data/ceps`), `--output` (padrão `<input>/ceps.sqlite`) e `--overwrite`. Sem o banco, os endpoints de CEP respondem `503` com `cep_database_unavailable`; os demais endpoints funcionam normalmente. A variável `CEP_DATABASE` aponta um arquivo alternativo.
+
+Sem `number`, a resposta traz `numberValidation.status: "not_provided"`; sem regra no complemento, `"range_unavailable"`; com regra, `"compatible"` ou `"incompatible"` (faixa e/ou lado par/ímpar).
 
 ## Docker
 
@@ -160,6 +178,8 @@ O Compose publica:
 
 - REST: `http://127.0.0.1:3000`
 - MCP HTTP: `http://127.0.0.1:3001/mcp`
+
+A imagem inclui o banco de CEP gerado no build (~118 MB adicionais). Os CSVs não vão para a imagem final.
 
 Serviços:
 
@@ -231,8 +251,10 @@ tests/domain    Testes unitários de domínio
 tests/rest      Testes da API REST
 tests/mcp       Testes do MCP
 tests/oracle    Testes opcionais contra o 4Devs via browser
+scripts         Scripts de build (gerador do SQLite de CEPs)
+data/ceps       CSVs de CEP (CEP Aberto); o SQLite gerado fica fora do git
 ```
 
 ## Escopo atual
 
-O v1 cobre uma parte selecionada do 4Devs: documentos brasileiros, encoders e ferramentas de texto. O objetivo é expandir esse contrato aos poucos, mantendo entradas, saídas e testes claros antes de adicionar novas ferramentas.
+O v1 cobre uma parte selecionada do 4Devs: documentos brasileiros, encoders, ferramentas de texto e consulta de CEP. O objetivo é expandir esse contrato aos poucos, mantendo entradas, saídas e testes claros antes de adicionar novas ferramentas.
