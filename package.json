@@ -10,6 +10,7 @@
     "dev:rest": "tsx src/rest/index.ts",
     "dev:mcp:stdio": "tsx src/mcp/stdio.ts",
     "dev:mcp:http": "tsx src/mcp/http.ts",
+    "build:cep-db": "tsx scripts/build-cep-db.ts",
     "start:rest": "node dist/src/rest/index.js",
     "start:mcp:stdio": "node dist/src/mcp/stdio.js",
     "start:mcp:http": "node dist/src/mcp/http.js",
