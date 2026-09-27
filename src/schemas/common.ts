@@ -11,7 +11,7 @@ export const seedSchema = z.string().min(1).optional();
 
 export const errorEnvelopeSchema = z.object({
   error: z.object({
-    code: z.enum(["invalid_parameter", "invalid_input", "internal_error"]),
+    code: z.enum(["invalid_parameter", "invalid_input", "internal_error", "cep_database_unavailable"]),
     message: z.string(),
     field: z.string().optional()
   })
