@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DomainError } from "../../src/domain/errors.js";
@@ -40,6 +41,28 @@ describe("CepRepository", () => {
     expect(domainError.code).toBe("cep_database_unavailable");
     expect(domainError.statusCode).toBe(503);
     expect(domainError.message).toContain("build:cep-db");
+  });
+
+  it("throws cep_database_unavailable 503 for a corrupt file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "devtools-br-cep-corrupt-"));
+    try {
+      const databasePath = join(directory, "ceps.sqlite");
+      writeFileSync(databasePath, "this is not sqlite");
+      const repository = new CepRepository(databasePath);
+      let thrown: unknown;
+      try {
+        repository.findCep("01001000");
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(DomainError);
+      const domainError = thrown as DomainError;
+      expect(domainError.code).toBe("cep_database_unavailable");
+      expect(domainError.statusCode).toBe(503);
+      expect(domainError.message).toContain("build:cep-db");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("finds a CEP with joined city and state", () => {
