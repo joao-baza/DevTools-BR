@@ -108,6 +108,7 @@ Códigos comuns:
 - `invalid_parameter`: payload inválido ou parâmetro fora do domínio aceito.
 - `invalid_input`: entrada malformada, como Base64 inválido.
 - `internal_error`: falha inesperada.
+- `cep_database_unavailable`: base de CEP ausente ou inválida (gere com `npm run build:cep-db`).
 
 ## MCP
 
