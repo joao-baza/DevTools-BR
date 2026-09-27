@@ -359,4 +359,39 @@ describe("MCP v1 CEP tools", () => {
       fixture.cleanup();
     }
   });
+
+  it("calls lookup_cep through the SDK protocol path with output validation", async () => {
+    const fixture = createCepFixture();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new TestMcpClient();
+    const server = buildMcpSdkServer({ cepDatabasePath: fixture.databasePath });
+
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+    try {
+      const found = await client.request({
+        method: "tools/call",
+        params: { name: "lookup_cep", arguments: { value: "01310930", number: 1200 } }
+      }) as CallToolResult;
+
+      expect(found.isError).toBe(false);
+      expect(found.structuredContent).toMatchObject({
+        cep: "01310930",
+        valid: true,
+        city: "São Paulo",
+        numberValidation: { status: "compatible", number: 1200 }
+      });
+
+      const absent = await client.request({
+        method: "tools/call",
+        params: { name: "lookup_cep", arguments: { value: "99999999" } }
+      }) as CallToolResult;
+
+      expect(absent.isError).toBe(false);
+      expect(absent.structuredContent).toMatchObject({ cep: "99999999", valid: false });
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+      fixture.cleanup();
+    }
+  });
 });
