@@ -13,6 +13,8 @@ import {
   validateRg
 } from "../domain/br-docs.js";
 import { DomainError } from "../domain/errors.js";
+import { formatCep, normalizeCep, validateNumber } from "../domain/cep.js";
+import { CepRepository, normalizeText } from "../domain/cep-repository.js";
 import {
   analyzeText,
   decodeBase64,
@@ -108,3 +110,56 @@ export const v1Services = {
     return analyzeText(input.text);
   }
 };
+
+export function createV1Services(cepRepository: CepRepository) {
+  return {
+    ...v1Services,
+    lookupCep(input: { value: string; number?: number }) {
+      const cep = normalizeCep(input.value);
+      cepRepository.assertSchema();
+      const record = cepRepository.findCep(cep);
+      if (record === null) {
+        return {
+          cep,
+          formatted: formatCep(cep),
+          valid: false,
+          message: "CEP não encontrado na base local."
+        };
+      }
+      return {
+        cep,
+        formatted: formatCep(cep),
+        valid: true,
+        address: record.address,
+        complement: record.complement,
+        neighborhood: record.neighborhood,
+        city: record.city,
+        state: record.state,
+        uf: record.uf,
+        numberValidation: validateNumber(input.number, record.complement)
+      };
+    },
+    listStates() {
+      cepRepository.assertSchema();
+      return { states: cepRepository.states() };
+    },
+    listCities(input: { uf: string; query?: string; limit?: number }) {
+      cepRepository.assertSchema();
+      const uf = input.uf.toUpperCase();
+      const allCities = cepRepository.cities(uf);
+      if (allCities === null) {
+        throw new DomainError("invalid_parameter", "UF not found in the CEP database", "uf");
+      }
+      const query = input.query ?? "";
+      const limit = input.limit ?? 20;
+      const matches = allCities.filter((city) => normalizeText(city).includes(normalizeText(query)));
+      return {
+        uf,
+        query,
+        cities: matches.slice(0, limit),
+        total: matches.length,
+        hasMore: matches.length > limit
+      };
+    }
+  };
+}

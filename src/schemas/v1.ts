@@ -43,3 +43,16 @@ export const documentResponseSchema = z.object({
   formatted: z.string().optional(),
   valid: z.boolean()
 });
+
+export const cepLookupRequestSchema = z.object({
+  value: z.string().min(1),
+  number: z.number().int().min(1).optional()
+});
+
+export const statesRequestSchema = z.object({});
+
+export const citiesRequestSchema = z.object({
+  uf: ufSchema,
+  query: z.string().max(100).default(""),
+  limit: z.number().int().min(1).max(100).default(20)
+});
