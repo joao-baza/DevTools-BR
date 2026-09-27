@@ -1,6 +1,9 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { InMemoryTransport, Protocol, type BaseContext, type CallToolResult, type ReadResourceResult } from "@modelcontextprotocol/server";
 import { buildMcpSdkServer, createMcpServer, sdkCatalogUri } from "../../src/mcp/server.js";
+import { createCepFixture } from "../helpers/cep-fixture.js";
 
 const expectedResourceUris = [
   sdkCatalogUri,
@@ -22,7 +25,10 @@ const expectedDocumentOutputFields = {
   generate_pis_pasep: ["pisPasep", "formatted", "valid"],
   validate_pis_pasep: ["pisPasep", "formatted", "valid", "message"],
   generate_renavam: ["renavam", "valid"],
-  validate_renavam: ["renavam", "valid", "message"]
+  validate_renavam: ["renavam", "valid", "message"],
+  lookup_cep: ["cep", "formatted", "valid", "message", "address", "complement", "neighborhood", "city", "state", "uf", "numberValidation"],
+  list_states: ["states"],
+  list_cities: ["uf", "query", "cities", "total", "hasMore"]
 } as const;
 
 class TestMcpClient extends Protocol<BaseContext> {
@@ -281,6 +287,76 @@ describe("MCP v1", () => {
       });
     } finally {
       await Promise.all([client.close(), server.close()]);
+    }
+  });
+});
+
+describe("MCP v1 CEP tools", () => {
+  it("lists CEP tools", () => {
+    const server = createMcpServer();
+    const toolNames = server.listToolsForTests().map((tool) => tool.name);
+
+    expect(toolNames).toContain("lookup_cep");
+    expect(toolNames).toContain("list_states");
+    expect(toolNames).toContain("list_cities");
+  });
+
+  it("looks up a CEP through the tool", async () => {
+    const fixture = createCepFixture();
+    try {
+      const server = createMcpServer({ cepDatabasePath: fixture.databasePath });
+      const result = await server.callToolForTests("lookup_cep", { value: "01310930", number: 1200 });
+
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        cep: "01310930",
+        valid: true,
+        city: "São Paulo",
+        uf: "SP",
+        numberValidation: { status: "compatible" }
+      });
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("lists states and cities through the tools", async () => {
+    const fixture = createCepFixture();
+    try {
+      const server = createMcpServer({ cepDatabasePath: fixture.databasePath });
+      const states = await server.callToolForTests("list_states", {});
+      expect(states.isError).toBe(false);
+      expect(states.structuredContent.states).toEqual([
+        { name: "Minas Gerais", abbreviation: "MG" },
+        { name: "São Paulo", abbreviation: "SP" }
+      ]);
+
+      const cities = await server.callToolForTests("list_cities", { uf: "SP", query: "sao" });
+      expect(cities.isError).toBe(false);
+      expect(cities.structuredContent).toMatchObject({ total: 1, cities: ["São Paulo"] });
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("returns cep_database_unavailable error without the database", async () => {
+    const server = createMcpServer({ cepDatabasePath: join(tmpdir(), `missing-${process.pid}-${Date.now()}.sqlite`) });
+    const result = await server.callToolForTests("lookup_cep", { value: "01001000" });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: { code: "cep_database_unavailable" } });
+  });
+
+  it("includes CEP tools in the catalog resource", async () => {
+    const fixture = createCepFixture();
+    try {
+      const server = createMcpServer({ cepDatabasePath: fixture.databasePath });
+      const resource = await server.readResourceForTests(sdkCatalogUri);
+
+      expect(resource.text).toContain("lookup_cep");
+      expect(resource.text).toContain("/api/validators/cep");
+    } finally {
+      fixture.cleanup();
     }
   });
 });
