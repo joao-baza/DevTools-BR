@@ -3,5 +3,5 @@ dist
 test-results
 playwright-report
 .env*
-data/ceps/*.sqlite
+data/ceps/*.sqlite*
 data/ceps/.*.tmp
