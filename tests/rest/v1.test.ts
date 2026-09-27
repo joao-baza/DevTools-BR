@@ -109,6 +109,38 @@ describe("REST v1", () => {
     expect(body).not.toHaveProperty("code");
   });
 
+  it("returns the stable error envelope for unsupported media types", async () => {
+    const app = makeApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/encoders/md5",
+      headers: { "content-type": "application/xml" },
+      payload: "<text>abc</text>"
+    });
+
+    expect(response.statusCode).toBe(415);
+    const body = response.json();
+    expect(body).toMatchObject({ error: { code: "invalid_parameter" } });
+    expect(body.error.message).toEqual(expect.any(String));
+    expect(body.error.message.length).toBeGreaterThan(0);
+  });
+
+  it("returns the stable error envelope for bodies over the size limit", async () => {
+    const app = makeApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/encoders/md5",
+      headers: { "content-type": "application/json" },
+      payload: { text: "a".repeat(1024 * 1024 + 1) }
+    });
+
+    expect(response.statusCode).toBe(413);
+    const body = response.json();
+    expect(body).toMatchObject({ error: { code: "invalid_parameter" } });
+    expect(body.error.message).toEqual(expect.any(String));
+    expect(body.error.message.length).toBeGreaterThan(0);
+  });
+
   it.each([
     ["/api/generators/cpf", {}],
     ["/api/validators/cpf", { value: "29603010308" }],
