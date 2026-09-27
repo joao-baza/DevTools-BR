@@ -57,9 +57,10 @@ function getFrameworkMessage(error: unknown): string {
 }
 
 function mapFrameworkError(error: unknown) {
-  if (getFrameworkStatus(error) === 400) {
+  const status = getFrameworkStatus(error);
+  if (status !== undefined && status >= 400 && status < 500) {
     return {
-      statusCode: 400,
+      statusCode: status,
       body: {
         error: {
           code: "invalid_parameter",
