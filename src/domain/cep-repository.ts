@@ -38,9 +38,13 @@ export class CepRepository {
     if (!existsSync(this.databasePath)) {
       throw this.unavailable(`CEP database not found at ${this.databasePath}`);
     }
+    let database: DatabaseSync | null = null;
     try {
-      return new DatabaseSync(this.databasePath, { readOnly: true });
+      database = new DatabaseSync(this.databasePath, { readOnly: true });
+      database.prepare("SELECT 1 FROM sqlite_master LIMIT 1").get();
+      return database;
     } catch {
+      database?.close();
       throw this.unavailable(`CEP database cannot be opened at ${this.databasePath}`);
     }
   }
