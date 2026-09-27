@@ -150,6 +150,8 @@ describe("MCP v1", () => {
 
     expect(resource.text).toContain("generate_cpf");
     expect(resource.mimeType).toBe("application/json");
+    expect(JSON.parse(resource.text)).toMatchObject({ version: "v1" });
+    expect(Array.isArray(JSON.parse(resource.text).tools)).toBe(true);
     expect(legacyResource.text).toBe(resource.text);
   });
 

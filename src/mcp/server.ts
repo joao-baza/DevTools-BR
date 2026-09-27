@@ -241,7 +241,7 @@ function buildCepToolRegistrations(services: ReturnType<typeof createV1Services>
     toolRegistration({
       name: "list_cities",
       title: "List Cities",
-      description: "List cities of a Brazilian state with accent-insensitive search.",
+      description: "List cities of a Brazilian state, with accent-insensitive search.",
       inputSchema: citiesRequestSchema,
       outputSchema: listCitiesOutputSchema,
       handler: services.listCities
@@ -591,7 +591,7 @@ function buildResourceDefinitions(tools: ToolRegistration[]) {
       name: "tools-catalog",
       title: "DevTools BR Tools Catalog",
       description: "JSON catalog of DevTools BR MCP v1 tools and REST endpoints.",
-      text: () => JSON.stringify(buildCatalogText(tools), null, 2)
+      text: () => buildCatalogText(tools)
     },
     {
       uri: "devs-clone://schemas/rest-v1",
